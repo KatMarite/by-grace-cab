@@ -1,0 +1,61 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,500&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  margin: 0;
+  min-height: 100vh;
+}
+
+body {
+  background-color: #FAF7F0;
+  color: #2B2B2B;
+  font-family: 'Inter', sans-serif;
+}
+
+:focus-visible {
+  outline: 2px solid #C9A227;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Wax-seal "G" mark used on booking confirmations */
+.grace-seal {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #E0BC4F, #C9A227 55%, #9C7D1A 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 3px 10px rgba(156, 125, 26, 0.45), inset 0 1px 2px rgba(255,255,255,0.4);
+}
+.grace-seal span {
+  font-family: 'Fraunces', serif;
+  font-weight: 600;
+  font-style: italic;
+  font-size: 28px;
+  color: #1B2A4A;
+}
+
+/* Dashed connector for route/ticket-stub stop lists */
+.route-line {
+  background-image: linear-gradient(to bottom, #C9A227 60%, transparent 40%);
+  background-size: 2px 10px;
+  background-repeat: repeat-y;
+  width: 2px;
+}
