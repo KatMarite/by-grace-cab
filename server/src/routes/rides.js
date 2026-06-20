@@ -1,7 +1,6 @@
 import express from 'express';
-import { nanoid } from 'nanoid';
 import { z } from 'zod';
-import { db } from '../db/index.js';
+import { Ride, Driver, User } from '../db/models.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { calculateFare } from '../lib/fare.js';
 
@@ -25,7 +24,6 @@ const quoteSchema = z.object({
   groupMembers: z.array(groupMemberSchema).optional(),
 });
 
-// Get a fare quote before booking - no auth required so riders can preview pricing
 router.post('/quote', (req, res) => {
   const parsed = quoteSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -45,7 +43,7 @@ router.post('/quote', (req, res) => {
 
 const bookSchema = z.object({
   type: z.enum(['on_demand', 'scheduled']),
-  scheduledFor: z.string().optional(), // ISO date string, required if type === 'scheduled'
+  scheduledFor: z.string().optional(),
   stops: z.array(stopSchema).min(2),
   groupMembers: z.array(groupMemberSchema).optional(),
   notes: z.string().optional(),
@@ -73,14 +71,11 @@ router.post('/', requireAuth, requireRole('rider'), async (req, res) => {
     return res.status(400).json({ error: err.message });
   }
 
-  await db.read();
-
-  const ride = {
-    id: nanoid(),
+  const rideData = {
     riderId: req.user.id,
     type,
     scheduledFor: scheduledFor || null,
-    status: 'requested', // requested -> assigned -> in_progress -> completed | cancelled
+    status: 'requested',
     driverId: null,
     stops: stops.map((s, i) => ({ order: i, ...s })),
     groupMembers: groupMembers || [],
@@ -89,81 +84,73 @@ router.post('/', requireAuth, requireRole('rider'), async (req, res) => {
     fareTotal: fareResult.total,
     notes: notes || '',
     createdAt: new Date().toISOString(),
-    assignedAt: null,
-    completedAt: null,
-    cancelledAt: null,
   };
 
-  db.data.rides.push(ride);
-
-  // Auto-assign for on-demand rides: pick first available online driver
   if (type === 'on_demand') {
-    const availableDriver = db.data.drivers.find((d) => d.status === 'online');
+    const availableDriver = await Driver.findOne({ status: 'online' });
     if (availableDriver) {
-      ride.driverId = availableDriver.userId;
-      ride.status = 'assigned';
-      ride.assignedAt = new Date().toISOString();
-      availableDriver.status = 'on_trip';
+      rideData.driverId = availableDriver.userId;
+      rideData.status = 'assigned';
+      rideData.assignedAt = new Date().toISOString();
+      await Driver.findByIdAndUpdate(availableDriver._id, { status: 'on_trip' });
     }
   }
 
-  await db.write();
-  res.status(201).json({ ride });
+  const ride = await Ride.create(rideData);
+  res.status(201).json({ ride: await attachNames(ride.toObject()) });
 });
 
-// List rides for the logged-in rider, driver, or admin
 router.get('/', requireAuth, async (req, res) => {
-  await db.read();
-  let rides;
-  if (req.user.role === 'admin') {
-    rides = db.data.rides;
-  } else if (req.user.role === 'driver') {
-    rides = db.data.rides.filter((r) => r.driverId === req.user.id);
-  } else {
-    rides = db.data.rides.filter((r) => r.riderId === req.user.id);
+  let query = {};
+  if (req.user.role === 'driver') {
+    query = { driverId: req.user.id };
+  } else if (req.user.role === 'rider') {
+    query = { riderId: req.user.id };
   }
-  rides = [...rides].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  res.json({ rides: rides.map((r) => attachNames(r)) });
+
+  const rides = await Ride.find(query).sort({ createdAt: -1 }).lean();
+  res.json({ rides: await Promise.all(rides.map(attachNames)) });
 });
 
-// Driver: see open on-demand requests waiting for assignment
 router.get('/queue', requireAuth, requireRole('driver'), async (req, res) => {
-  await db.read();
-  const queued = db.data.rides.filter((r) => r.status === 'requested' && r.type === 'on_demand');
-  res.json({ rides: queued.map((r) => attachNames(r)) });
+  const queued = await Ride.find({ status: 'requested', type: 'on_demand' }).lean();
+  res.json({ rides: await Promise.all(queued.map(attachNames)) });
 });
 
 router.get('/:id', requireAuth, async (req, res) => {
-  await db.read();
-  const ride = db.data.rides.find((r) => r.id === req.params.id);
+  const ride = await Ride.findById(req.params.id).lean();
   if (!ride) return res.status(404).json({ error: 'Ride not found.' });
+
   if (req.user.role === 'rider' && ride.riderId !== req.user.id) {
     return res.status(403).json({ error: 'You do not have access to this ride.' });
   }
   if (req.user.role === 'driver' && ride.driverId !== req.user.id) {
     return res.status(403).json({ error: 'You do not have access to this ride.' });
   }
-  res.json({ ride: attachNames(ride) });
+  res.json({ ride: await attachNames(ride) });
 });
 
-// Driver accepts a queued ride manually (in case auto-assign found no one online yet)
 router.post('/:id/accept', requireAuth, requireRole('driver'), async (req, res) => {
-  await db.read();
-  const ride = db.data.rides.find((r) => r.id === req.params.id);
+  const ride = await Ride.findById(req.params.id);
   if (!ride) return res.status(404).json({ error: 'Ride not found.' });
+
   if (ride.status !== 'requested') {
     return res.status(409).json({ error: 'This ride has already been picked up by another driver.' });
   }
-  const driver = db.data.drivers.find((d) => d.userId === req.user.id);
+  const driver = await Driver.findOne({ userId: req.user.id });
   if (!driver || driver.status !== 'online') {
     return res.status(400).json({ error: 'Go online before accepting rides.' });
   }
+  
   ride.driverId = req.user.id;
   ride.status = 'assigned';
   ride.assignedAt = new Date().toISOString();
+  await ride.save();
+
   driver.status = 'on_trip';
-  await db.write();
-  res.json({ ride: attachNames(ride) });
+  await driver.save();
+
+  res.json({ ride: await attachNames(ride.toObject()) });
 });
 
 const statusSchema = z.object({
@@ -174,8 +161,7 @@ router.patch('/:id/status', requireAuth, async (req, res) => {
   const parsed = statusSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Invalid status.' });
 
-  await db.read();
-  const ride = db.data.rides.find((r) => r.id === req.params.id);
+  const ride = await Ride.findById(req.params.id);
   if (!ride) return res.status(404).json({ error: 'Ride not found.' });
 
   const isOwnerRider = req.user.role === 'rider' && ride.riderId === req.user.id;
@@ -184,7 +170,7 @@ router.patch('/:id/status', requireAuth, async (req, res) => {
   if (!isOwnerRider && !isOwnerDriver && !isAdmin) {
     return res.status(403).json({ error: 'You do not have access to this ride.' });
   }
-  // Riders may only cancel; drivers/admin can progress or cancel
+
   if (isOwnerRider && parsed.data.status !== 'cancelled') {
     return res.status(403).json({ error: 'Riders can only cancel a ride.' });
   }
@@ -192,29 +178,31 @@ router.patch('/:id/status', requireAuth, async (req, res) => {
   ride.status = parsed.data.status;
   if (parsed.data.status === 'completed') {
     ride.completedAt = new Date().toISOString();
-    freeUpDriver(ride.driverId);
+    await freeUpDriver(ride.driverId);
   }
   if (parsed.data.status === 'cancelled') {
     ride.cancelledAt = new Date().toISOString();
-    freeUpDriver(ride.driverId);
+    await freeUpDriver(ride.driverId);
   }
 
-  await db.write();
-  res.json({ ride: attachNames(ride) });
+  await ride.save();
+  res.json({ ride: await attachNames(ride.toObject()) });
 });
 
-function freeUpDriver(driverUserId) {
+async function freeUpDriver(driverUserId) {
   if (!driverUserId) return;
-  const driver = db.data.drivers.find((d) => d.userId === driverUserId);
-  if (driver) driver.status = 'online';
+  await Driver.findOneAndUpdate({ userId: driverUserId }, { status: 'online' });
 }
 
-function attachNames(ride) {
-  const rider = db.data.users.find((u) => u.id === ride.riderId);
-  const driverUser = ride.driverId ? db.data.users.find((u) => u.id === ride.driverId) : null;
-  const driverRecord = ride.driverId ? db.data.drivers.find((d) => d.userId === ride.driverId) : null;
+async function attachNames(ride) {
+  const rider = await User.findById(ride.riderId).lean();
+  const driverUser = ride.driverId ? await User.findById(ride.driverId).lean() : null;
+  const driverRecord = ride.driverId ? await Driver.findOne({ userId: ride.driverId }).lean() : null;
+  
+  const { _id, __v, ...rest } = ride;
   return {
-    ...ride,
+    ...rest,
+    id: _id,
     riderName: rider ? rider.name : 'Unknown',
     driverName: driverUser ? driverUser.name : null,
     driverVehicle: driverRecord ? `${driverRecord.vehicleMake} ${driverRecord.vehicleModel} · ${driverRecord.plate}` : null,

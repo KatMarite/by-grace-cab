@@ -1,9 +1,15 @@
+import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
-import { nanoid } from 'nanoid';
-import { db, initDb } from './index.js';
+import { User, Driver } from './models.js';
+import { initDb } from './index.js';
 
 async function seed() {
   await initDb();
+
+  if (mongoose.connection.readyState !== 1) {
+    console.error('Cannot seed, database not connected.');
+    process.exit(1);
+  }
 
   const accounts = [
     { name: 'Grace Admin', email: 'admin@bygracecab.com', phone: '0110000000', password: 'admin123', role: 'admin' },
@@ -21,27 +27,24 @@ async function seed() {
   ];
 
   for (const acc of accounts) {
-    const existing = db.data.users.find((u) => u.email === acc.email);
+    const existing = await User.findOne({ email: acc.email });
     if (existing) {
       console.log(`Skipping ${acc.email}, already exists.`);
       continue;
     }
     const passwordHash = await bcrypt.hash(acc.password, 10);
-    const user = {
-      id: nanoid(),
+    
+    const user = await User.create({
       name: acc.name,
       email: acc.email,
       phone: acc.phone,
       passwordHash,
       role: acc.role,
-      createdAt: new Date().toISOString(),
-    };
-    db.data.users.push(user);
+    });
 
     if (acc.role === 'driver') {
-      db.data.drivers.push({
-        id: nanoid(),
-        userId: user.id,
+      await Driver.create({
+        userId: user._id,
         vehicleMake: acc.vehicleMake,
         vehicleModel: acc.vehicleModel,
         plate: acc.plate,
@@ -53,8 +56,8 @@ async function seed() {
     console.log(`Created ${acc.role}: ${acc.email} / ${acc.password}`);
   }
 
-  await db.write();
   console.log('Seed complete.');
+  process.exit(0);
 }
 
 seed();

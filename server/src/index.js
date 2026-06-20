@@ -34,6 +34,10 @@ app.use((err, req, res, next) => {
 
 await initDb();
 
-app.listen(PORT, () => {
-  console.log(`By Grace Cab API running on http://localhost:${PORT}`);
-});
+if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`By Grace Cab API running on http://localhost:${PORT}`);
+  });
+}
+
+export default app;
