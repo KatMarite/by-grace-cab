@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import { initDb } from './db/index.js';
+import { initDb, isDbConnected } from './db/index.js';
 import authRoutes from './routes/auth.js';
 import rideRoutes from './routes/rides.js';
 import driverRoutes from './routes/drivers.js';
@@ -14,7 +14,16 @@ const PORT = process.env.PORT || 4000;
 app.use(cors());
 app.use(express.json());
 
-app.get('/api/health', (req, res) => res.json({ ok: true, service: 'By Grace Cab API' }));
+app.get('/api/health', (req, res) =>
+  res.json({ ok: true, service: 'By Grace Cab API', db: isDbConnected() }),
+);
+
+app.use('/api', (req, res, next) => {
+  if (isDbConnected()) return next();
+  res.status(503).json({
+    error: 'Database unavailable. Check MONGODB_URI and Atlas IP whitelist.',
+  });
+});
 
 app.use('/api/auth', authRoutes);
 app.use('/api/rides', rideRoutes);

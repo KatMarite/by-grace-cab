@@ -1,14 +1,23 @@
-const API_BASE = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '/api' : 'http://localhost:4000/api');
+const API_BASE = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '/api' : '/api');
 
 async function request(path, { method = 'GET', body, token } = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetch(`${API_BASE}${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    throw new Error(
+      import.meta.env.PROD
+        ? 'Cannot reach the server. Please try again in a moment.'
+        : 'Cannot reach the API. Start the backend with: cd server && npm start',
+    );
+  }
 
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
