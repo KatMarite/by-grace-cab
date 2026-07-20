@@ -27,7 +27,7 @@ const rideSchema = new mongoose.Schema({
   riderId: { type: String, ref: 'User', required: true },
   type: { type: String, enum: ['on_demand', 'scheduled'], default: 'on_demand' },
   scheduledFor: { type: String },
-  status: { type: String, enum: ['pending', 'accepted', 'in_progress', 'completed', 'cancelled'], default: 'pending' },
+  status: { type: String, enum: ['requested', 'assigned', 'in_progress', 'completed', 'cancelled'], default: 'requested' },
   driverId: { type: String, ref: 'User' },
   stops: [{
     order: Number,
