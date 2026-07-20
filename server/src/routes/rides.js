@@ -24,13 +24,13 @@ const quoteSchema = z.object({
   groupMembers: z.array(groupMemberSchema).optional(),
 });
 
-router.post('/quote', (req, res) => {
+router.post('/quote', async (req, res) => {
   const parsed = quoteSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: 'Add at least a pickup and destination stop.', details: parsed.error.flatten() });
   }
   try {
-    const result = calculateFare({
+    const result = await calculateFare({
       stops: parsed.data.stops,
       isScheduled: !!parsed.data.isScheduled,
       groupMembers: parsed.data.groupMembers,
@@ -62,7 +62,7 @@ router.post('/', requireAuth, requireRole('rider'), async (req, res) => {
 
   let fareResult;
   try {
-    fareResult = calculateFare({
+    fareResult = await calculateFare({
       stops,
       isScheduled: type === 'scheduled',
       groupMembers,

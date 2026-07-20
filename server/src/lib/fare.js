@@ -2,24 +2,26 @@
 // Transparent, fixed-rate pricing (no surge) — this is a key differentiator vs Uber.
 
 const BASE_FARE = 25;          // R25 base fare (flat boarding fee)
-const PER_KM_RATE = 8.5;       // R8.50 per km
+const PER_KM_RATE = 12.5;      // R12.50 per km
 const PER_STOP_FEE = 12;       // R12 fee per extra stop (beyond pickup + final destination)
 const SCHEDULED_DISCOUNT = 0.05; // 5% off for pre-booking ahead of time
 const SERVICE_FEE_RATE = 0.08; // 8% service fee (transparent, shown in breakdown)
 
-// Haversine distance in km between two lat/lng points
-function distanceKm(a, b) {
-  const R = 6371;
-  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
-  const dLng = ((b.lng - a.lng) * Math.PI) / 180;
-  const lat1 = (a.lat * Math.PI) / 180;
-  const lat2 = (b.lat * Math.PI) / 180;
-  const sinDLat = Math.sin(dLat / 2);
-  const sinDLng = Math.sin(dLng / 2);
-  const c =
-    sinDLat * sinDLat +
-    Math.cos(lat1) * Math.cos(lat2) * sinDLng * sinDLng;
-  return R * 2 * Math.atan2(Math.sqrt(c), Math.sqrt(1 - c));
+async function getRouteDistanceKm(stops) {
+  // stops is array of {lat, lng}
+  // OSRM format: lng,lat;lng,lat
+  const coordinates = stops.map(s => `${s.lng},${s.lat}`).join(';');
+  const url = `http://router.project-osrm.org/route/v1/driving/${coordinates}?overview=false`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error('Failed to calculate route distance.');
+  }
+  const data = await response.json();
+  if (data.code !== 'Ok' || !data.routes || data.routes.length === 0) {
+    throw new Error('No route found for these locations.');
+  }
+  // distance is in meters, return km
+  return data.routes[0].distance / 1000;
 }
 
 /**
@@ -28,15 +30,12 @@ function distanceKm(a, b) {
  * isScheduled: boolean, whether this ride was pre-booked.
  * groupMembers: array of {name, email, share} where share is a 0-1 fraction of the total (must sum to 1).
  */
-export function calculateFare({ stops, isScheduled, groupMembers }) {
+export async function calculateFare({ stops, isScheduled, groupMembers }) {
   if (!Array.isArray(stops) || stops.length < 2) {
     throw new Error('At least a pickup and destination stop are required');
   }
 
-  let totalDistanceKm = 0;
-  for (let i = 0; i < stops.length - 1; i++) {
-    totalDistanceKm += distanceKm(stops[i], stops[i + 1]);
-  }
+  const totalDistanceKm = await getRouteDistanceKm(stops);
 
   const extraStopsCount = Math.max(0, stops.length - 2);
   const distanceCost = totalDistanceKm * PER_KM_RATE;
